@@ -1,10 +1,14 @@
 #!/bin/bash
-# proxy — bridges edge-net (eth0) and app-net (eth1); reverse-proxies to webapp.
+# proxy — bridges edge-net (eth0) and app-net (eth1) and runs the Coraza WAF
+# (OWASP CRS) in front of the webapp. Same choke-point role as before; the only
+# change from the old plain-nginx proxy is that Caddy+Coraza now inspects every
+# request before reverse-proxying it to the app.
 ip addr add 172.30.0.10/24 dev eth0
 ip addr add 172.31.0.10/24 dev eth1
 ip link set eth0 up
 ip link set eth1 up
 
-# nginx.conf is mounted from proxy/etc/nginx/nginx.conf. Run in the foreground
-# so Kathara keeps the container alive.
-nginx -g 'daemon off;'
+# Caddyfile is mounted from proxy/etc/caddy/Caddyfile; the CRS mode/logging
+# override from proxy/etc/coraza/mode.conf. Run in the foreground so Kathara
+# keeps the container alive.
+exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
