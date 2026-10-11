@@ -1,0 +1,59 @@
+# Cardinal — proxy/choke point as a Coraza WAF (OWASP CRS) in front of the app.
+#
+# Request path:  edge-net -> proxy here -> [Coraza + OWASP CRS] -> webapp:5000
+# The WAF inspects the raw HTTP request (URL, params, headers, body) and scores
+# it with CRS. It only ever sees the request on the wire, never the final SQL
+# the app builds -- which is exactly the blind spot the structural / second-order
+# bypasses aim at.
+#
+# Two ports, so before/after needs no reload (coraza compiles its ruleset once,
+# and Kathara copies these configs in at start, so a live toggle is unreliable):
+#   :80    ENFORCING  (SecRuleEngine On)            -> blocks attacks. The choke point.
+#   :8080  DETECTION  (SecRuleEngine DetectionOnly) -> logs but forwards. "Before the WAF" baseline.
+# Both reverse-proxy to the same webapp. ./expose-ui.sh publishes :80 to the host.
+
+{
+	# No TLS in the lab: serve plain HTTP and never reach out to an ACME server
+	# (which would fail in the isolated lab and spam the log).
+	auto_https off
+	admin localhost:2019
+	# coraza_waf must run before reverse_proxy so a blocked request never reaches
+	# the backend.
+	order coraza_waf first
+	log {
+		output stdout
+		format console
+	}
+}
+
+# --- :80 — enforcing WAF (the real choke point) ---
+:80 {
+	coraza_waf {
+		directives `
+		Include /etc/coraza/coraza.conf
+		Include /etc/coraza/crs/crs-setup.conf
+		Include /etc/coraza/crs/rules/*.conf
+		Include /etc/coraza/mode-enforce.conf
+		`
+	}
+	reverse_proxy 172.31.0.20:5000 {
+		header_up Host {host}
+		header_up X-Real-IP {remote_host}
+	}
+}
+
+# --- :8080 — detection-only baseline (attack succeeds, but is logged) ---
+:8080 {
+	coraza_waf {
+		directives `
+		Include /etc/coraza/coraza.conf
+		Include /etc/coraza/crs/crs-setup.conf
+		Include /etc/coraza/crs/rules/*.conf
+		Include /etc/coraza/mode-detect.conf
+		`
+	}
+	reverse_proxy 172.31.0.20:5000 {
+		header_up Host {host}
+		header_up X-Real-IP {remote_host}
+	}
+}

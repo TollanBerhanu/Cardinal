@@ -217,7 +217,7 @@ docker rm -f cardinal-webapp-ui cardinal-locust-ui
 
 | Node | edgenet | appnet | Role |
 |---|---|---|---|
-| proxy | 172.30.0.10 | 172.31.0.10 | nginx reverse proxy (choke point) |
+| proxy | 172.30.0.10 | 172.31.0.10 | Coraza WAF (OWASP CRS) + reverse proxy (choke point) |
 | locust | 172.30.0.20 | — | benign traffic |
 | attacker | 172.30.0.30 | — | sqlmap / curl |
 | webapp | — | 172.31.0.20 | Flask app (gunicorn :5000) |

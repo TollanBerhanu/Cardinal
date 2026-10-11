@@ -1,8 +1,9 @@
 # Cardinal — Phase 1 (SQL injection, Kathara lab)
 
 A minimal, self-contained [Kathara](https://www.kathara.org/) lab for the SQL
-injection scenario: a vulnerable staff-portal webapp behind an nginx choke
-point, a seeded MariaDB, a Locust benign-traffic generator, and an attacker node
+injection scenario: a vulnerable staff-portal webapp behind a Coraza WAF (OWASP
+CRS) choke point, a seeded MariaDB, a Locust benign-traffic generator, and an
+attacker node
 with sqlmap — all observed by a passive monitor.
 
 The webapp is the single system-under-test for **all three** Cardinal scenarios
@@ -43,7 +44,7 @@ the external tier to the application — the choke point is enforced by topology
 
 | Node     | edgenet     | appnet      | bridge¹ | Role                              |
 |----------|-------------|-------------|---------|-----------------------------------|
-| proxy    | 172.30.0.10 | 172.31.0.10 | yes     | nginx reverse proxy (choke point) |
+| proxy    | 172.30.0.10 | 172.31.0.10 | yes     | Coraza WAF (OWASP CRS) + reverse proxy (choke point) |
 | locust   | 172.30.0.20 | —           | yes     | benign traffic (web UI :8089)     |
 | attacker | 172.30.0.30 | —           | —       | sqlmap / curl                     |
 | webapp   | —           | 172.31.0.20 | —       | Flask app (gunicorn :5000)        |
@@ -174,7 +175,8 @@ sql-injection/
 ├── expose-ui.sh                # publishes portal (:8080) + Locust UI (:8089) to the host
 ├── *.startup                   # per-node boot scripts (IPs + service launch)
 ├── images/*/Dockerfile         # custom image definitions
-├── proxy/etc/nginx/nginx.conf  # reverse proxy → webapp:5000
+├── proxy/etc/caddy/Caddyfile   # Coraza WAF (OWASP CRS) + reverse proxy → webapp:5000
+├── proxy/etc/coraza/           # WAF modes: :80 enforce (On), :8080 detection-only
 ├── webapp/app/                 # Flask app: wsgi.py + portal/ package (routes,
 │                               #   templates, static) — mounted at /app
 ├── db/seed.sql                 # schema + seed (+ portal user) — mounted at /seed.sql
