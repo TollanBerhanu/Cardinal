@@ -8,15 +8,28 @@ Toggles (all per request):
   ?id=<expr>                numeric-context filter (Tier 1 escape blind spot)
   ?sort=<col>               ORDER BY identifier, concatenated (Tier 2 param hole)
 """
+from urllib.parse import unquote_to_bytes
+
 from flask import Blueprint, g, redirect, render_template, request, url_for
 
 from ..config import Config, resolve
 from ..db import (get_conn, SEARCH_IMPLS, filter_directory_by_id,
                   search_directory_param_sorted, get_user_status,
-                  secondorder_lookup)
+                  secondorder_lookup, search_directory_gbk)
 from ..sanitize_server import purify_server
 
 bp = Blueprint("directory", __name__)
+
+
+def _raw_q_bytes(query_string: bytes) -> bytes:
+    """Recover the raw, percent-decoded BYTES of ?q=... straight from the request
+    line. The charset-confusion attack hinges on a 0xbf lead byte, which Flask's
+    normal ``request.args`` decoding would have already mangled into U+FFFD, so
+    the GBK path must parse the query string itself."""
+    for pair in query_string.split(b"&"):
+        if pair.startswith(b"q="):
+            return unquote_to_bytes(pair[2:].replace(b"+", b" "))
+    return b""
 
 
 @bp.route("/myteam")
@@ -45,6 +58,19 @@ def search():
     serversan = request.args.get("serversan", "off").strip().lower()
     id_expr = request.args.get("id")
     sort = request.args.get("sort")
+
+    # Charset-confusion path: needs the RAW request bytes (Flask already mangled
+    # the 0xbf lead byte in raw_term) and its own GBK-charset connection. Handled
+    # before the normal decoded-string flow because it works at the byte level.
+    if impl == "gbk":
+        conn = get_conn(charset="gbk")
+        try:
+            results, executed_sql = search_directory_gbk(conn, _raw_q_bytes(request.query_string))
+        finally:
+            conn.close()
+        return render_template("search.html", active_nav="directory",
+                               term=raw_term, results=results, impl=impl,
+                               executed_sql=executed_sql)
 
     # Tier 1: server-side sanitization runs on the server (curl cannot skip it).
     term, rejected = purify_server(raw_term, serversan)
