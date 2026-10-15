@@ -13,8 +13,10 @@
     <div class="brand"><span class="logo">C</span> Cardinal Portal</div>
     <p class="muted" style="text-align:center;margin-top:0">Sign in to the staff portal</p>
 
-    {% if error %}<div class="flash err">{{ enc(error, 'html') }}</div>{% endif %}
+    {% if signed_in_as %}<div class="flash ok">Signed in as {{ enc(signed_in_as, 'html') }}.</div>
+    {% elif error %}<div class="flash err">{{ enc(error, 'html') }}</div>{% endif %}
 
+    {% if not signed_in_as %}
     <form method="post" {% if sanitize_on %}data-san="regex"{% endif %}>
       <div class="field">
         <label>Username</label>
@@ -26,6 +28,7 @@
       </div>
       <button class="btn" type="submit" style="width:100%;justify-content:center">Sign in</button>
     </form>
+    {% endif %}
 
     <p class="muted" style="font-size:12.5px;margin-bottom:0">
       Demo account <code>alice / alicepw</code>. SQL path:
@@ -33,7 +36,20 @@
       Client-side sanitization (app-wide): <code>?sanitize=on</code> / <code>?sanitize=off</code>.
       {% if sanitize_on %}<b style="color:#0b7a5b">SANITIZED — login uses a JS regex denylist</b>{% else %}<b style="color:#b00">VULNERABLE (no client-side filtering)</b>{% endif %}
     </p>
-    {% if last_sql %}<pre style="margin-top:10px">{{ enc(last_sql, 'html') }}</pre>{% endif %}
+
+    {# Query executed on this login -- shown for BOTH a failed login and a
+       successful one (incl. an auth-bypass), so the SQL that ran is visible
+       before continuing, mirroring the search page's pane. #}
+    {% if last_sql %}
+    <div class="card" style="margin-top:10px">
+      <div class="card-hd"><h2 style="font-size:13px;margin:0">Query executed</h2></div>
+      <pre style="margin:0;white-space:pre-wrap;word-break:break-all">{{ enc(last_sql, 'html') }}</pre>
+    </div>
+    {% endif %}
+
+    {% if signed_in_as %}
+    <a class="btn" href="{{ url_for('core.dashboard') }}" style="width:100%;justify-content:center;margin-top:12px">Continue to dashboard →</a>
+    {% endif %}
   </div>
 </div>
 </body>
