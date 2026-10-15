@@ -14,7 +14,10 @@ import pymysql
 from .config import Config
 
 
-def get_conn():
+def get_conn(charset: str = "utf8mb4"):
+    """Per-request PyMySQL connection. ``charset`` is overridable only so the
+    charset-confusion path (``search_directory_gbk``) can open a GBK connection;
+    every normal path uses the utf8mb4 default."""
     return pymysql.connect(
         host=Config.DB_HOST,
         port=Config.DB_PORT,
@@ -23,7 +26,7 @@ def get_conn():
         database=Config.DB_NAME,
         cursorclass=pymysql.cursors.DictCursor,
         autocommit=True,
-        charset="utf8mb4",
+        charset=charset,
     )
 
 
@@ -53,6 +56,48 @@ def search_directory_param(conn, term: str):
     )
     with conn.cursor() as cur:
         cur.execute(sql, ("%" + term + "%",))
+        return cur.fetchall(), sql
+
+
+def _naive_byte_escape(raw: bytes) -> bytes:
+    """A deliberately broken, charset-UNAWARE escaper -- the kind a hand-rolled
+    ``addslashes()`` is. It walks the RAW BYTES and prepends a backslash (0x5c)
+    before every quote/backslash byte, with no idea whether a byte starts a
+    multibyte character. That ignorance is the whole bug: under a GBK connection a
+    lead byte like 0xbf swallows the 0x5c we just inserted as the second half of a
+    2-byte character, so the 0x27 quote it was meant to neutralise is set free.
+    A charset-AWARE escaper (what PyMySQL's parameter binding does) would see the
+    0xbf opening a 2-byte char and never treat the next byte as a lone quote."""
+    out = bytearray()
+    for b in raw:
+        if b in (0x27, 0x22, 0x5c):  # ' " \
+            out.append(0x5c)
+        out.append(b)
+    return bytes(out)
+
+
+def search_directory_gbk(conn, term_bytes: bytes):
+    """CHARSET-CONFUSION sink (sqli-reference: encoding/charset confusion). The
+    term is escaped on the raw BYTES by ``_naive_byte_escape`` and only then
+    interpreted as GBK -- the escape and the charset decode disagree about where
+    character boundaries are. Feed it ``%bf%27 OR 1=1-- -`` and the escaper turns
+    0xbf 0x27 into 0xbf 0x5c 0x27; GBK reads 0xbf5c as one character, leaving a
+    live quote that breaks out into the parse tree.
+
+    This is the ONE place in the lab where 'but we escape quotes' is actually
+    defeated. Contrast ``search_directory_concat`` (no escaping, trivially
+    injectable) and ``search_directory_param`` -- the parameterized path is immune
+    here too, because PyMySQL escapes per decoded character, never byte-wise, so
+    the GBK trick has nothing to confuse. ``conn`` MUST be a GBK connection
+    (``get_conn(charset="gbk")``)."""
+    escaped = _naive_byte_escape(term_bytes)
+    term = escaped.decode("gbk", errors="replace")
+    sql = (
+        "SELECT " + _DIR_COLS + " FROM directory "
+        "WHERE name LIKE '%" + term + "%' ORDER BY name LIMIT 50"
+    )
+    with conn.cursor() as cur:
+        cur.execute(sql)
         return cur.fetchall(), sql
 
 
