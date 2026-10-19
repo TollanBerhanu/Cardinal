@@ -1,9 +1,5 @@
 # Cardinal
 
-Hands-on network-security labs that put an **attack side-by-side with its benign
-twin** on the same live environment, so you can study what actually separates the
-two — on the wire, in the logs, and at the detector.
-
 Each lab is self-contained in its own directory with its own README and setup.
 
 ## Labs
@@ -30,11 +26,3 @@ surge.
 
 → See the per-component READMEs under
 [`volumetric-vs-flashcrowd/`](volumetric-vs-flashcrowd/).
-
-## Getting started
-
-Pick a lab and follow its README. Each lists its own prerequisites (Kathara +
-Docker for `sql-injection/`; Docker Compose for `volumetric-vs-flashcrowd/`).
-
-> These labs are intentionally vulnerable and generate attack traffic. Run them
-> only in an isolated environment you control, never on a production network.
