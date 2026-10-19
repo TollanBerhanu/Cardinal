@@ -29,4 +29,7 @@ docker build -t cardinal/attacker images/attacker/
 echo "[*] Building cardinal/monitor..."
 docker build -t cardinal/monitor images/monitor/
 
+echo "[*] Building cardinal/oobsvc..."
+docker build -t cardinal/oobsvc images/oobsvc/
+
 echo "[*] All images built successfully."

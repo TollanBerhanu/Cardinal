@@ -38,6 +38,15 @@ done
 echo "[*] db: importing seed..."
 mariadb < /seed.sql
 
-echo "[*] db: ready (portal database seeded)."
+# OOB scenario: register the loadable oob_dns UDF so an
+# injected SELECT can make the DB leak a value over DNS.
+echo "[*] db: registering OOB UDF (oob_dns)..."
+mariadb < /oob-setup.sql
+
+# Egress-control toggle scripts Kathara's file
+# mount drops the executable bit, so restore it (mirrors attacker/monitor).
+chmod +x /usr/local/bin/egress-lock /usr/local/bin/egress-unlock 2>/dev/null
+
+echo "[*] db: ready (portal database seeded; OOB UDF loaded, egress OPEN)."
 # Keep the container alive on the server process.
 wait "$DB_PID"

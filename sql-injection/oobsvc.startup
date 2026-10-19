@@ -1,0 +1,13 @@
+#!/bin/bash
+# oobsvc — attacker-controlled OOB DNS collector on app-net (eth0).
+# Logs every hostname the compromised db is tricked into resolving, which is
+# how the out-of-band channel leaks a secret. Placed on
+# app-net so the single-homed db can reach it; the egress-control defense
+# is what later severs that reachability.
+ip addr add 172.31.0.40/24 dev eth0
+ip link set eth0 up
+
+# The machine directory mounts at /, so the listener lands at /opt/dns_listener.py.
+# It logs to /shared/oob_dns.log (host-backed) so captured secrets can be read
+# from the host without attaching to the node.
+exec python3 /opt/dns_listener.py
