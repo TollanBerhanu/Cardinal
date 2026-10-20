@@ -2,3 +2,9 @@ sql-injection/shared/oob_dns.log
 sql-injection/shared/oob_dns.log
 .DS_Store
 sql-injection/shared/*.log
+
+# reference PDFs kept as local material, not tracked in git
+sql-injection/docs/*.pdf
+
+# sqlmap attack output (dumps, session db, logs) — never tracked
+sqlmap-output/
