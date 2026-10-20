@@ -1,0 +1,7 @@
+#!/bin/bash
+# egress-unlock -- remove the egress-control rule, reopening the database's
+# outbound connections. Returns the DB to its default state so the
+# before/after demo can be repeated.
+nft delete table inet oobguard 2>/dev/null \
+    && echo "[egress] DB outbound UNLOCKED -- OOB channel open again." \
+    || echo "[egress] no egress-lock rule was present (already unlocked)."

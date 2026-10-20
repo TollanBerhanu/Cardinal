@@ -1,0 +1,33 @@
+#!/bin/bash
+# egress-lock -- network egress control for the database: block its outbound connections.
+#
+# Installs an nftables rule on the DB that DROPS new outbound connections while
+# still letting the database answer the webapp's queries. This closes the
+# out-of-band channel: the oob_dns UDF can still run, but its DNS packet to the
+# collector can no longer leave the host, so nothing is leaked.
+#
+# Toggle live, no restart:
+#   kathara exec db -- egress-lock      # defense ON  (OOB channel closed)
+#   kathara exec db -- egress-unlock    # defense OFF (OOB channel open)
+set -e
+
+nft -f - <<'RULES'
+table inet oobguard {
+    chain output {
+        type filter hook output priority 0; policy drop;
+
+        # Let the DB reply to connections others opened to it (e.g. the webapp
+        # on 3306): those are part of already-established flows.
+        ct state established,related accept
+
+        # Loopback stays open (local tooling, health checks).
+        oifname "lo" accept
+
+        # Everything else the DB tries to initiate outbound -- including the
+        # oob_dns UDF's DNS query to the collector -- is dropped.
+    }
+}
+RULES
+
+echo "[egress] DB outbound LOCKED -- new outbound connections dropped (OOB channel closed)."
+echo "[egress] The webapp can still query the DB; the oob_dns leak cannot leave."
