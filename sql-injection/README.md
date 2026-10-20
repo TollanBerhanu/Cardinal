@@ -14,12 +14,14 @@ object-import endpoint that forwards to `desersvc`. Sessions are serialized into
 the `cache` (Redis) tier. Each surface is toggleable per request (`?impl`,
 `?enc`, `?deser`) so an attack and its byte-identical benign twin share a route.
 
-Still deferred to later phases: the WAF (ModSecurity/CRS on the proxy), the IDS
-stack (Zeek/Suricata/Snort on the monitor), and the full three-tier segmentation
-(separate data-net, perimeter/core firewalls). Phase-1 attacker tooling covers
-SQLi (sqlmap); XSS/deser attacker tooling is a later-phase add.
+The WAF is **live**: the proxy runs Coraza with the OWASP CRS, enforcing on `:80`
+(blocks) and detection-only on `:8080` (logs and forwards) — see the topology table
+and `proxy/etc/coraza/`. Still deferred to later phases: the IDS stack
+(Zeek/Suricata/Snort on the monitor) and the full three-tier segmentation (separate
+data-net, perimeter/core firewalls). Phase-1 attacker tooling covers SQLi (sqlmap);
+XSS/deser attacker tooling is a later-phase add.
 
-> **New here? See [`TUTORIAL.md`](TUTORIAL.md)** for a full walkthrough — start it,
+> **New here? See [`docs/TUTORIAL.md`](docs/TUTORIAL.md)** for a full walkthrough — start it,
 > browse the portal, run the attacks (automated *and* by hand in the browser),
 > and find the captured pcaps/dumps.
 
@@ -106,6 +108,12 @@ curl -G http://172.30.0.10/search --data-urlencode "q=Alice&impl=param"  # safe 
 The webapp defaults to the vulnerable **concat** path (`SQL_MODE=concat`). Any
 request can flip to the safe path per-request with `?impl=param`, so an attack
 and its benign twin traverse the identical route — only the parse tree differs.
+
+Two more per-request toggles drive the structural-defense experiments (see
+[`docs/RUNBOOK.md`](docs/RUNBOOK.md)): `?rasp=off|detect|block` enables the RASP
+structural detector at the DB call (blocks any input that added query structure),
+and `?decode=single|double` adds an extra app-side URL decode — the lever for the
+double-encoding WAF bypass (`attacker/scripts/encoding_evasion.sh`).
 
 ### XSS and deserialization surfaces (same webapp)
 
