@@ -16,11 +16,13 @@ signal a downstream HTML client would turn into a sink -- so the reflected/
 stored payloads are captured here too.
 """
 from functools import wraps
+from urllib.parse import unquote
 
 from flask import Blueprint, g, jsonify, request
 
 from ..config import Config, TOGGLES, resolve
 from ..db import get_conn, SEARCH_IMPLS, LOGIN_IMPLS
+from ..rasp import RaspBlocked
 from .. import session as sess
 
 bp = Blueprint("api", __name__, url_prefix="/api")
@@ -79,11 +81,15 @@ def login():
     username = data.get("username", "")
     password = data.get("password", "")
     impl = resolve("SQL_IMPL", request.args, Config.SQL_IMPL)
+    rasp_mode = resolve("RASP_MODE", request.args, Config.RASP_MODE)
     fn = LOGIN_IMPLS.get(impl, LOGIN_IMPLS["concat"])
 
     conn = get_conn()
     try:
-        row, executed_sql = fn(conn, username, password)
+        row, executed_sql = fn(conn, username, password, rasp_mode)
+    except RaspBlocked as blocked:
+        return jsonify(error="blocked by RASP: input added query structure",
+                       rasp=blocked.verdict), 403
     finally:
         conn.close()
 
@@ -118,13 +124,19 @@ def logout():
 def directory():
     term = request.args.get("q", "")
     impl = resolve("SQL_IMPL", request.args, Config.SQL_IMPL)
+    rasp_mode = resolve("RASP_MODE", request.args, Config.RASP_MODE)
     fn = SEARCH_IMPLS.get(impl, SEARCH_IMPLS["concat"])
+
+    # Double-decode toggle (mirrors the HTML /search route): one extra unquote so
+    # a double-encoded payload that slipped the WAF re-forms into the real attack.
+    if resolve("DECODE", request.args, Config.DECODE) == "double":
+        term = unquote(term)
 
     executed_sql = None
     conn = get_conn()
     try:
         if term:
-            rows, executed_sql = fn(conn, term)
+            rows, executed_sql = fn(conn, term, rasp_mode)
         else:
             with conn.cursor() as cur:
                 cur.execute(
@@ -132,6 +144,9 @@ def directory():
                     "FROM directory ORDER BY name LIMIT 100"
                 )
                 rows = cur.fetchall()
+    except RaspBlocked as blocked:
+        return jsonify(error="blocked by RASP: input added query structure",
+                       rasp=blocked.verdict), 403
     finally:
         conn.close()
 

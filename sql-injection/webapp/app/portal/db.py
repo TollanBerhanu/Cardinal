@@ -12,6 +12,7 @@ Two things live here on purpose:
 import pymysql
 
 from .config import Config
+from . import rasp
 
 
 def get_conn(charset: str = "utf8mb4"):
@@ -35,25 +36,32 @@ def get_conn(charset: str = "utf8mb4"):
 
 _DIR_COLS = "id, name, title, department, email, phone, location"
 
+# The intended (parameterized) shape of the directory search -- the template the
+# RASP compares every concrete query against. It is exactly what
+# search_directory_param builds, so "value stays a value" is defined by the safe
+# sibling the developer would have written.
+_DIR_SEARCH_TEMPLATE = (
+    "SELECT " + _DIR_COLS + " FROM directory "
+    "WHERE name LIKE %s ORDER BY name LIMIT 50"
+)
 
-def search_directory_concat(conn, term: str):
+
+def search_directory_concat(conn, term: str, rasp_mode: str = "off"):
     """VULNERABLE: the term is concatenated straight into the SQL text, so an
     input like  ' OR '1'='1  adds a new logical clause to the parse tree."""
     sql = (
         "SELECT " + _DIR_COLS + " FROM directory "
         "WHERE name LIKE '%" + term + "%' ORDER BY name LIMIT 50"
     )
+    rasp.guard(sql, _DIR_SEARCH_TEMPLATE, rasp_mode, route="search:concat")
     with conn.cursor() as cur:
         cur.execute(sql)
         return cur.fetchall(), sql
 
 
-def search_directory_param(conn, term: str):
+def search_directory_param(conn, term: str, rasp_mode: str = "off"):
     """SAFE: the term is bound as a value; the query's structure is fixed."""
-    sql = (
-        "SELECT " + _DIR_COLS + " FROM directory "
-        "WHERE name LIKE %s ORDER BY name LIMIT 50"
-    )
+    sql = _DIR_SEARCH_TEMPLATE
     with conn.cursor() as cur:
         cur.execute(sql, ("%" + term + "%",))
         return cur.fetchall(), sql
@@ -76,7 +84,7 @@ def _naive_byte_escape(raw: bytes) -> bytes:
     return bytes(out)
 
 
-def search_directory_gbk(conn, term_bytes: bytes):
+def search_directory_gbk(conn, term_bytes: bytes, rasp_mode: str = "off"):
     """CHARSET-CONFUSION sink (sqli-reference: encoding/charset confusion). The
     term is escaped on the raw BYTES by ``_naive_byte_escape`` and only then
     interpreted as GBK -- the escape and the charset decode disagree about where
@@ -96,15 +104,24 @@ def search_directory_gbk(conn, term_bytes: bytes):
         "SELECT " + _DIR_COLS + " FROM directory "
         "WHERE name LIKE '%" + term + "%' ORDER BY name LIMIT 50"
     )
+    # The GBK bypass frees a live quote, so the final SQL the app builds carries
+    # the extra structure -- RASP sees it here just like any other concat break-out.
+    rasp.guard(sql, _DIR_SEARCH_TEMPLATE, rasp_mode, route="search:gbk")
     with conn.cursor() as cur:
         cur.execute(sql)
         return cur.fetchall(), sql
 
 
-def search_directory_proc(conn, term: str):
+def search_directory_proc(conn, term: str, rasp_mode: str = "off"):
     """Tier 2 hole: a STORED PROCEDURE that builds dynamic SQL from its parameter.
     The term is passed bound (looks safe) but the proc CONCATs it into the query,
-    so injection lands inside the procedure. 'We use stored procedures' != safe."""
+    so injection lands inside the procedure. 'We use stored procedures' != safe.
+
+    DELIBERATELY NOT RASP-guarded (reference §2.4 limit: RASP "only protects the
+    specific database calls that have been instrumented"). The app-side call is a
+    clean  CALL search_dir(%s)  -- the injectable string is assembled INSIDE the
+    DB by PREPARE, where an app-layer detector cannot see it. This path shows RASP
+    slipping, on purpose."""
     with conn.cursor() as cur:
         cur.callproc("search_dir", (term,))
         return cur.fetchall(), "CALL search_dir(%s)  -- proc concatenates term into dynamic SQL"
@@ -118,11 +135,17 @@ def get_user_status(conn, uid):
     return (row or {}).get("status") or ""
 
 
-def secondorder_lookup(conn, status: str):
+def secondorder_lookup(conn, status: str, rasp_mode: str = "off"):
     """SECOND-ORDER sink. The status was STORED earlier via a parameterized query
     (safe at entry), but here it is read back and CONCATENATED into a new query
     (unsafe at use). Input-time parameterization does not help -- the injection
-    is re-introduced from storage."""
+    is re-introduced from storage.
+
+    DELIBERATELY NOT RASP-guarded (reference §2.4 limit: RASP "normally reasons
+    about one request at a time", so a second-order attack planted in an earlier
+    request slips past). The triggering /myteam request carries no injected input
+    to correlate; the malicious structure comes from trusted storage. This path
+    shows RASP slipping, on purpose -- the ``rasp_mode`` arg is accepted and ignored."""
     sql = (
         "SELECT " + _DIR_COLS + " FROM directory "
         "WHERE department LIKE '%" + status + "%' ORDER BY name LIMIT 50"
@@ -132,19 +155,24 @@ def secondorder_lookup(conn, status: str):
         return cur.fetchall(), sql
 
 
-def filter_directory_by_id(conn, id_expr: str):
+def filter_directory_by_id(conn, id_expr: str, rasp_mode: str = "off"):
     """Tier 1 numeric-context: id is concatenated WITHOUT quotes, so a
     quote-escaping sanitizer has nothing to escape."""
     sql = (
         "SELECT " + _DIR_COLS + " FROM directory "
         "WHERE id = " + id_expr + " ORDER BY name LIMIT 50"
     )
+    intended = (
+        "SELECT " + _DIR_COLS + " FROM directory "
+        "WHERE id = %s ORDER BY name LIMIT 50"
+    )
+    rasp.guard(sql, intended, rasp_mode, route="search:id")
     with conn.cursor() as cur:
         cur.execute(sql)
         return cur.fetchall(), sql
 
 
-def search_directory_param_sorted(conn, term: str, sort: str):
+def search_directory_param_sorted(conn, term: str, sort: str, rasp_mode: str = "off"):
     """Tier 2 hole: the VALUE is parameterized (safe), but the ORDER BY column is
     an IDENTIFIER, which cannot be parameterized, so it is concatenated. Injection
     returns through the sort parameter despite 'using prepared statements'."""
@@ -152,6 +180,12 @@ def search_directory_param_sorted(conn, term: str, sort: str):
         "SELECT " + _DIR_COLS + " FROM directory "
         "WHERE name LIKE %s ORDER BY " + sort + " LIMIT 50"
     )
+    # Intended shape: the value is bound (%s) and ORDER BY names a single column.
+    intended = (
+        "SELECT " + _DIR_COLS + " FROM directory "
+        "WHERE name LIKE %s ORDER BY name LIMIT 50"
+    )
+    rasp.guard(sql, intended, rasp_mode, route="search:sort")
     with conn.cursor() as cur:
         cur.execute(sql, ("%" + term + "%",))
         return cur.fetchall(), sql
@@ -160,23 +194,27 @@ def search_directory_param_sorted(conn, term: str, sort: str):
 # --- Login ------------------------------------------------------------------
 # The login route also reaches the DB and shares the same two-path design.
 
-def login_concat(conn, username: str, password: str):
+_LOGIN_TEMPLATE = (
+    "SELECT id, username, display_name, bio, homepage FROM users "
+    "WHERE username = %s AND password = %s"
+)
+
+
+def login_concat(conn, username: str, password: str, rasp_mode: str = "off"):
     """VULNERABLE: classic auth-bypass surface (' OR '1'='1' -- )."""
     sql = (
         "SELECT id, username, display_name, bio, homepage FROM users "
         "WHERE username = '" + username + "' AND password = '" + password + "'"
     )
+    rasp.guard(sql, _LOGIN_TEMPLATE, rasp_mode, route="login:concat")
     with conn.cursor() as cur:
         cur.execute(sql)
         return cur.fetchone(), sql
 
 
-def login_param(conn, username: str, password: str):
+def login_param(conn, username: str, password: str, rasp_mode: str = "off"):
     """SAFE: credentials bound as values."""
-    sql = (
-        "SELECT id, username, display_name, bio, homepage FROM users "
-        "WHERE username = %s AND password = %s"
-    )
+    sql = _LOGIN_TEMPLATE
     with conn.cursor() as cur:
         cur.execute(sql, (username, password))
         return cur.fetchone(), sql
