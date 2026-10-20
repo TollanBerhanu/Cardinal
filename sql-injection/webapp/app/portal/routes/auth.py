@@ -9,6 +9,7 @@ from flask import Blueprint, g, make_response, redirect, render_template, reques
 
 from ..config import Config, resolve
 from ..db import get_conn, LOGIN_IMPLS
+from ..rasp import RaspBlocked
 from .. import session as sess
 
 bp = Blueprint("auth", __name__)
@@ -22,11 +23,20 @@ def login():
     username = request.form.get("username", "")
     password = request.form.get("password", "")
     impl = resolve("SQL_IMPL", request.args, Config.SQL_IMPL)
+    rasp_mode = resolve("RASP_MODE", request.args, Config.RASP_MODE)
     fn = LOGIN_IMPLS.get(impl, LOGIN_IMPLS["concat"])
 
     conn = get_conn()
     try:
-        row, executed_sql = fn(conn, username, password)
+        row, executed_sql = fn(conn, username, password, rasp_mode)
+    except RaspBlocked as blocked:
+        v = blocked.verdict
+        return render_template(
+            "login.html", signed_in_as=None,
+            error="Request blocked by RASP (input altered the query structure).",
+            last_sql="intended: " + v.get("intended_shape", "") +
+                     "\nfinal:    " + v.get("final_shape", ""),
+        ), 403
     finally:
         conn.close()
 

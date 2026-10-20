@@ -16,9 +16,21 @@ from ..config import Config, resolve
 from ..db import (get_conn, SEARCH_IMPLS, filter_directory_by_id,
                   search_directory_param_sorted, get_user_status,
                   secondorder_lookup, search_directory_gbk)
+from ..rasp import RaspBlocked
 from ..sanitize_server import purify_server
 
 bp = Blueprint("directory", __name__)
+
+
+def _rasp_blocked_page(verdict):
+    """Render the search page as a 403 when RASP blocks the call."""
+    return render_template(
+        "search.html", active_nav="directory", term="", results=[],
+        impl="rasp-blocked",
+        executed_sql="[RASP] blocked: input added query structure.\n"
+                     "intended: " + verdict.get("intended_shape", "") + "\n"
+                     "final:    " + verdict.get("final_shape", ""),
+    ), 403
 
 
 def _raw_q_bytes(query_string: bytes) -> bytes:
@@ -55,6 +67,7 @@ def myteam():
 def search():
     raw_term = request.args.get("q", "")
     impl = resolve("SQL_IMPL", request.args, Config.SQL_IMPL)
+    rasp_mode = resolve("RASP_MODE", request.args, Config.RASP_MODE)
     serversan = request.args.get("serversan", "off").strip().lower()
     id_expr = request.args.get("id")
     sort = request.args.get("sort")
@@ -65,7 +78,10 @@ def search():
     if impl == "gbk":
         conn = get_conn(charset="gbk")
         try:
-            results, executed_sql = search_directory_gbk(conn, _raw_q_bytes(request.query_string))
+            results, executed_sql = search_directory_gbk(
+                conn, _raw_q_bytes(request.query_string), rasp_mode)
+        except RaspBlocked as blocked:
+            return _rasp_blocked_page(blocked.verdict)
         finally:
             conn.close()
         return render_template("search.html", active_nav="directory",
@@ -82,12 +98,12 @@ def search():
             executed_sql = "(input rejected by server-side allowlist)"
         elif id_expr is not None:
             id_clean, _ = purify_server(id_expr, serversan)
-            results, executed_sql = filter_directory_by_id(conn, id_clean)
+            results, executed_sql = filter_directory_by_id(conn, id_clean, rasp_mode)
         elif sort is not None:
-            results, executed_sql = search_directory_param_sorted(conn, term, sort)
+            results, executed_sql = search_directory_param_sorted(conn, term, sort, rasp_mode)
         elif term:
             fn = SEARCH_IMPLS.get(impl, SEARCH_IMPLS["concat"])
-            results, executed_sql = fn(conn, term)
+            results, executed_sql = fn(conn, term, rasp_mode)
         else:
             with conn.cursor() as cur:
                 cur.execute(
@@ -95,6 +111,8 @@ def search():
                     "FROM directory ORDER BY name LIMIT 100"
                 )
                 results = cur.fetchall()
+    except RaspBlocked as blocked:
+        return _rasp_blocked_page(blocked.verdict)
     finally:
         conn.close()
 

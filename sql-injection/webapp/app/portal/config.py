@@ -55,6 +55,11 @@ class Config:
     # "safe" (accept a restricted, data-only format).
     DESER_MODE = _env_flag("DESER_MODE", "unsafe")
 
+    # RASP structural detector at the DB call (app/rasp.py): "off" (no check),
+    # "detect" (log the verdict, allow) or "block" (log, and 403 when the input
+    # added query structure). Default off so existing experiments are unchanged.
+    RASP_MODE = _env_flag("RASP_MODE", "off")
+
 
 def resolve(name: str, request_args, default: str) -> str:
     """Resolve a toggle: per-request query arg wins, else the configured default.
@@ -74,4 +79,5 @@ TOGGLES = {
     "SQL_IMPL": "impl",
     "XSS_ENCODING": "enc",
     "DESER_MODE": "deser",
+    "RASP_MODE": "rasp",
 }

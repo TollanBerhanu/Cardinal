@@ -6,10 +6,12 @@ ip addr add 172.31.0.20/24 dev eth0
 ip link set eth0 up
 
 # --- Per-condition attack-surface defaults (override per request with
-#     ?impl=concat|param, ?enc=raw|escape, ?deser=unsafe|safe) ---
+#     ?impl=concat|param, ?enc=raw|escape, ?deser=unsafe|safe,
+#     ?rasp=off|detect|block) ---
 export SQL_IMPL=concat        # concat (vulnerable) | param (safe)
 export XSS_ENCODING=raw       # raw (vulnerable) | escape (safe)
 export DESER_MODE=unsafe      # unsafe | safe
+export RASP_MODE=off          # off | detect | block  (structural detector at the DB call)
 
 # --- Service wiring (app-net IPs) ---
 export DB_HOST=172.31.0.30
