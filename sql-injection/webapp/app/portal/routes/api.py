@@ -16,6 +16,7 @@ signal a downstream HTML client would turn into a sink -- so the reflected/
 stored payloads are captured here too.
 """
 from functools import wraps
+from urllib.parse import unquote
 
 from flask import Blueprint, g, jsonify, request
 
@@ -125,6 +126,11 @@ def directory():
     impl = resolve("SQL_IMPL", request.args, Config.SQL_IMPL)
     rasp_mode = resolve("RASP_MODE", request.args, Config.RASP_MODE)
     fn = SEARCH_IMPLS.get(impl, SEARCH_IMPLS["concat"])
+
+    # Double-decode toggle (mirrors the HTML /search route): one extra unquote so
+    # a double-encoded payload that slipped the WAF re-forms into the real attack.
+    if resolve("DECODE", request.args, Config.DECODE) == "double":
+        term = unquote(term)
 
     executed_sql = None
     conn = get_conn()

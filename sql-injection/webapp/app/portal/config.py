@@ -60,6 +60,13 @@ class Config:
     # added query structure). Default off so existing experiments are unchanged.
     RASP_MODE = _env_flag("RASP_MODE", "off")
 
+    # Extra URL-decode applied by the app before the SQL path: "single" (the
+    # Werkzeug default -- one decode) or "double" (one more unquote). The second
+    # layer models the common double-decoding app and is what makes a
+    # double-encoded payload survive the WAF yet still execute (see the directory
+    # route and attacker/scripts/encoding_evasion.sh).
+    DECODE = _env_flag("DECODE", "single")
+
 
 def resolve(name: str, request_args, default: str) -> str:
     """Resolve a toggle: per-request query arg wins, else the configured default.
@@ -80,4 +87,5 @@ TOGGLES = {
     "XSS_ENCODING": "enc",
     "DESER_MODE": "deser",
     "RASP_MODE": "rasp",
+    "DECODE": "decode",
 }

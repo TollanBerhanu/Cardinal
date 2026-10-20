@@ -8,7 +8,7 @@ Toggles (all per request):
   ?id=<expr>                numeric-context filter (Tier 1 escape blind spot)
   ?sort=<col>               ORDER BY identifier, concatenated (Tier 2 param hole)
 """
-from urllib.parse import unquote_to_bytes
+from urllib.parse import unquote, unquote_to_bytes
 
 from flask import Blueprint, g, redirect, render_template, request, url_for
 
@@ -71,6 +71,13 @@ def search():
     serversan = request.args.get("serversan", "off").strip().lower()
     id_expr = request.args.get("id")
     sort = request.args.get("sort")
+
+    # Double-decode toggle: Werkzeug already decoded the query string once, so a
+    # double-encoded payload arrives still-encoded (e.g. %2555 -> %55). decode=double
+    # applies ONE more unquote (%55 -> U), modelling the common double-decoding app
+    # and re-forming the payload the WAF never saw. The benign twin sets it too.
+    if resolve("DECODE", request.args, Config.DECODE) == "double":
+        raw_term = unquote(raw_term)
 
     # Charset-confusion path: needs the RAW request bytes (Flask already mangled
     # the 0xbf lead byte in raw_term) and its own GBK-charset connection. Handled
