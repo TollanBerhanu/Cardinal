@@ -49,7 +49,7 @@ whole run can be pinned with the matching env var (`SQL_IMPL`, `XSS_ENCODING`, �
 | `?enc=` | `raw` (default) · `escape` | output encoding for reflected/stored values (XSS) | — |
 | `?deser=` | `unsafe` (default) · `safe` | object-import reconstruction mode | — |
 | `?rasp=` | `off` (default) · `detect` · `block` | RASP structural detector at the DB call: compares the final query to its intended shape | 2.4 |
-| `?decode=` | `single` (default) · `double` | extra app-side URL decode (models a double-decoding app) — the lever for the double-encoding bypass | 3 (alternate encodings) |
+| `?decode=` | `single` (default) · `double` · `triple` | extra app-side URL decodes (0/1/2 beyond Werkzeug). Must **out-decode** the WAF: CRS normalizes 2 layers, so `triple` is the one that bypasses | 3 (alternate encodings) |
 | `?sanitize=` | `on` · `off` | client-side defenses (cookie-persisted) — curl skips these | — |
 
 Routes that reach the DB: `GET /search?q=` and `POST /login` (and their `/api/*`
@@ -113,7 +113,7 @@ python3 /scripts/model_bypasses.py  # charset + structural-detector models, with
 |---|---|---|
 | Parameterized query (2.1) | `?impl=param` neutralizes every value payload | `?sort=` / `?id=` — non-parameterizable positions (§3) |
 | Input sanitization (2.2) | allowlist rejects the field | denylist self-nesting (`UNUNIONION`), escape vs numeric context, second-order |
-| WAF / CRS (2.3) | `:80` 403s recognizable payloads | token-split comments, case, **alternate/double encoding** (§3) |
+| WAF / CRS (2.3) | `:80` 403s recognizable payloads (incl. **double**-encoding — CRS decodes 2 layers) | **triple**-encoding + `?decode=triple` out-decodes the WAF by one layer (§3) |
 | RASP (2.4) | `?rasp=block` 403s any input that added query structure | second-order (`/myteam`) and in-DB dynamic SQL (`impl=proc`) — both uninstrumented by design |
 | Least privilege (2.5) | `LOAD_FILE` returns NULL | UNION on in-scope tables still extracts |
 
@@ -134,18 +134,21 @@ curl -sG "$P/search" --data-urlencode "q=zzz' UNION SELECT id,username,password,
 tail /shared/rasp_audit.log   # JSON verdicts: intended_shape vs final_shape
 ```
 
-### 4.5 Double-encoding evasion + composition (reference §3)
+### 4.5 Multi-encoding evasion + composition (reference §3)
 
 ```bash
-/scripts/encoding_evasion.sh   # plain->single->double vs :80/:8080, then RASP catches it
+/scripts/encoding_evasion.sh   # plain->single->double (all blocked) -> triple (fires) -> RASP
 ```
 
-Walks a payload from cleartext → single-encoded → double-encoded against the
-enforcing WAF, then shows RASP catching the double-encoded payload (that beat the
-WAF) at the DB call. The `?decode=double` toggle supplies the second decode the
-WAF didn't do; without it the payload is inert at the app too. Whether CRS's own
-double-encoding rule (920xxx) catches the `%25` is read off the walk and
-`/shared/waf_audit.log`, not assumed.
+The evasion needs the app to decode **one layer more than the WAF**. Coraza/CRS
+normalizes **two** encoding layers (argument parse + `urlDecodeUni`), so plain,
+single- and **double**-encoded payloads are all fully revealed and caught by
+libinjection (rule **942100** — verify in `/shared/waf_audit.log`). A **triple**-
+encoded payload with `?decode=triple` (Werkzeug once + two extra unquotes) survives
+the WAF's two decodes as inert `%XX`, slips past, and re-forms at the DB call. The
+script encodes every byte so even `UNION`/`SELECT` stay hidden, then adds
+`rasp=block`: RASP inspects the decoded query and 403s the payload that beat the WAF
+— the composition.
 
 ### 4.3 Safe-path control
 
