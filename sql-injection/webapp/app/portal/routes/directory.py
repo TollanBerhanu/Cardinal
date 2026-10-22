@@ -12,7 +12,7 @@ from urllib.parse import unquote, unquote_to_bytes
 
 from flask import Blueprint, g, redirect, render_template, request, url_for
 
-from ..config import Config, resolve
+from ..config import Config, resolve, DECODE_EXTRA
 from ..db import (get_conn, SEARCH_IMPLS, filter_directory_by_id,
                   search_directory_param_sorted, get_user_status,
                   secondorder_lookup, search_directory_gbk)
@@ -72,11 +72,12 @@ def search():
     id_expr = request.args.get("id")
     sort = request.args.get("sort")
 
-    # Double-decode toggle: Werkzeug already decoded the query string once, so a
-    # double-encoded payload arrives still-encoded (e.g. %2555 -> %55). decode=double
-    # applies ONE more unquote (%55 -> U), modelling the common double-decoding app
-    # and re-forming the payload the WAF never saw. The benign twin sets it too.
-    if resolve("DECODE", request.args, Config.DECODE) == "double":
+    # Extra-decode toggle: Werkzeug already decoded the query string once. The WAF
+    # (Coraza/CRS) normalizes TWO layers, so to slip past it the app must decode one
+    # layer MORE than the WAF -- decode=triple (two extra unquotes) does that for a
+    # triple-encoded payload, while decode=double (one extra) is still matched by the
+    # WAF. The benign twin sets the same value, so the request bytes stay identical.
+    for _ in range(DECODE_EXTRA.get(resolve("DECODE", request.args, Config.DECODE), 0)):
         raw_term = unquote(raw_term)
 
     # Charset-confusion path: needs the RAW request bytes (Flask already mangled

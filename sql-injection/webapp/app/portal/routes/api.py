@@ -20,7 +20,7 @@ from urllib.parse import unquote
 
 from flask import Blueprint, g, jsonify, request
 
-from ..config import Config, TOGGLES, resolve
+from ..config import Config, TOGGLES, resolve, DECODE_EXTRA
 from ..db import get_conn, SEARCH_IMPLS, LOGIN_IMPLS
 from ..rasp import RaspBlocked
 from .. import session as sess
@@ -127,9 +127,9 @@ def directory():
     rasp_mode = resolve("RASP_MODE", request.args, Config.RASP_MODE)
     fn = SEARCH_IMPLS.get(impl, SEARCH_IMPLS["concat"])
 
-    # Double-decode toggle (mirrors the HTML /search route): one extra unquote so
-    # a double-encoded payload that slipped the WAF re-forms into the real attack.
-    if resolve("DECODE", request.args, Config.DECODE) == "double":
+    # Extra-decode toggle (mirrors /search): apply N extra unquotes so a payload
+    # encoded one layer deeper than the WAF normalizes (decode=triple) re-forms here.
+    for _ in range(DECODE_EXTRA.get(resolve("DECODE", request.args, Config.DECODE), 0)):
         term = unquote(term)
 
     executed_sql = None

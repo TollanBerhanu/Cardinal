@@ -60,11 +60,13 @@ class Config:
     # added query structure). Default off so existing experiments are unchanged.
     RASP_MODE = _env_flag("RASP_MODE", "off")
 
-    # Extra URL-decode applied by the app before the SQL path: "single" (the
-    # Werkzeug default -- one decode) or "double" (one more unquote). The second
-    # layer models the common double-decoding app and is what makes a
-    # double-encoded payload survive the WAF yet still execute (see the directory
-    # route and attacker/scripts/encoding_evasion.sh).
+    # Extra URL-decodes the app applies before the SQL path, modelling an app that
+    # decodes user input more than once. "single" = none beyond Werkzeug's one
+    # decode; "double" = one more unquote; "triple" = two more. The point is to
+    # OUT-DECODE the WAF: Coraza/CRS normalizes TWO encoding layers, so a double-
+    # encoded payload is matched (libinjection sees the decoded SQL), while a
+    # triple-encoded payload with decode=triple survives the WAF and re-forms at
+    # the app (see attacker/scripts/encoding_evasion.sh).
     DECODE = _env_flag("DECODE", "single")
 
 
@@ -89,3 +91,9 @@ TOGGLES = {
     "RASP_MODE": "rasp",
     "DECODE": "decode",
 }
+
+# ?decode= value -> how many EXTRA url-decodes the app applies beyond the one
+# Werkzeug already did. See the DECODE note on Config above: the attack needs the
+# app to decode one layer MORE than the WAF (which normalizes two), so triple-
+# encoding + decode=triple is what actually slips past a live Coraza/CRS.
+DECODE_EXTRA = {"single": 0, "double": 1, "triple": 2}
