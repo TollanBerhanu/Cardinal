@@ -66,6 +66,11 @@ def myteam():
 @bp.route("/search")
 def search():
     raw_term = request.args.get("q", "")
+
+    if request.args.get("split") == "on":
+        raw_term = "".join(request.args.getlist("q"))
+
+
     impl = resolve("SQL_IMPL", request.args, Config.SQL_IMPL)
     rasp_mode = resolve("RASP_MODE", request.args, Config.RASP_MODE)
     serversan = request.args.get("serversan", "off").strip().lower()

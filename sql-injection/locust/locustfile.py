@@ -52,6 +52,14 @@ class EmployeeBehavior(SequentialTaskSet):
         pid = random.randint(1, 17)  # 17 directory entries in the seed
         self.client.get(f"/profile/{pid}", name="/profile/[id]")
 
+    @task(1)
+    def split_search(self):
+        term = random.choice(SEARCH_TERMS)
+        half = max(1, len(term) // 2)
+        self.client.get(
+            f"/search?split=on&q={term[:half]}&q={term[half:]}",
+            name="/search?split=on&q=[half]&q=[half]",
+        )
 
 class BenignUser(HttpUser):
     tasks = [EmployeeBehavior]
