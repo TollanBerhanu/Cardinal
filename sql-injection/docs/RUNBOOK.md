@@ -51,6 +51,7 @@ whole run can be pinned with the matching env var (`SQL_IMPL`, `XSS_ENCODING`, �
 | `?rasp=` | `off` (default) · `detect` · `block` | RASP structural detector at the DB call: compares the final query to its intended shape | 2.4 |
 | `?decode=` | `single` (default) · `double` · `triple` | extra app-side URL decodes (0/1/2 beyond Werkzeug). Must **out-decode** the WAF: CRS normalizes 2 layers, so `triple` is the one that bypasses | 3 (alternate encodings) |
 | `?sanitize=` | `on` · `off` | client-side defenses (cookie-persisted) — curl skips these | — |
+| `?split=` | `on` · (absent) | rejoin ALL `q` params into one term (HTTP parameter fragmentation), then feed the concat sink | 3 (HPF) |
 
 Routes that reach the DB: `GET /search?q=` and `POST /login` (and their `/api/*`
 twins). `GET /profile/<id>` is a parameterized control route. `/myteam` is the
@@ -149,6 +150,14 @@ the WAF's two decodes as inert `%XX`, slips past, and re-forms at the DB call. T
 script encodes every byte so even `UNION`/`SELECT` stay hidden, then adds
 `rasp=block`: RASP inspects the decoded query and 403s the payload that beat the WAF
 — the composition.
+
+### 4.6 Parameter fragmentation (HPF)
+
+``` bash
+  /scripts/run_fragmentation.sh # halves are caught by WAF, detection forces app to rejoin them and inject, RASP blocks it
+```
+
+HTTP Parameter Fragmentation (HPF) splits a single payload across duplicate 'q' parameters, each half is sent separately and with '?split=on' makes the app rejoin them through .join(getlist) creating the single injectable term.  Here the WAF, Coraza/CRS uses libinjection so each parameter value is tokenized seperatly, the fragments still contain recognizable SQL sections and is fingerprinted as SQLi (Find rule response 942100 in waf_audit.log), this is then blocked at :80. The duplicate param shape is not what the system catches, its the SQL content in the fragmentation that gets flagged.  Only on the detection port does the app rejoin the halves and inject, where finally RASP inspects the final query and 403s it.  HPF can beat regex/signature WAFs, but not tokenized systems, with RASP as a backstop in the end.  
 
 ### 4.3 Safe-path control
 
